@@ -445,6 +445,9 @@
     az.appendChild(field("Foundry base URL (Claude)", input("foundryBaseUrl", "https://<resource>.services.ai.azure.com/anthropic/"), "The AnthropicFoundry base_url — the app appends /v1/messages."));
     az.appendChild(field("Claude deployment name", input("claudeModel", "claude-fable-5"), "Sent as the 'model' — your Foundry deployment name."));
     az.appendChild(field("GPT endpoint (optional, full URL)", input("gptEndpoint", "https://<resource>.services.ai.azure.com/openai/deployments/<dep>/chat/completions?api-version=2024-10-21")));
+    const holdsKey = el("input", { type: "checkbox" }); holdsKey.dataset.key = "proxyHoldsKey"; if (s.proxyHoldsKey) holdsKey.checked = true;
+    az.appendChild(el("label", { class: "row gap", style: "margin:.4rem 0" }, [holdsKey,
+      el("span", { text: "Local proxy supplies the Azure key (recommended — key stays on your desktop via AZURE_API_KEY, never in pat.enc.json)" })]));
     const noteModel = el("select", { class: "inp" }); ["claude", "gpt"].forEach((m) => { const o = el("option", { value: m, text: m }); if (s.noteModel === m) o.selected = true; noteModel.appendChild(o); }); noteModel.dataset.key = "noteModel";
     const qModel = el("select", { class: "inp" }); ["gpt", "claude"].forEach((m) => { const o = el("option", { value: m, text: m }); if (s.questionModel === m) o.selected = true; qModel.appendChild(o); }); qModel.dataset.key = "questionModel";
     az.appendChild(field("Model for notes", noteModel));
@@ -472,14 +475,16 @@
   }
   function saveFrom(root) {
     const patch = {};
-    root.querySelectorAll("[data-key]").forEach((i) => (patch[i.dataset.key] = i.value.trim()));
+    root.querySelectorAll("[data-key]").forEach((i) => {
+      patch[i.dataset.key] = i.type === "checkbox" ? i.checked : i.value.trim();
+    });
     store.saveSettings(patch);
   }
   function secretsTool() {
     const card = el("div", { class: "card" }, [el("h3", { text: "Create encrypted secrets blob (one-time setup)" }),
       el("p", { class: "muted small", text: "Encrypt your PAT (+ optional Azure key) under a passphrase. Commit the resulting pat.enc.json to your PUBLIC app repo, then unlock from anywhere with just the passphrase." })]);
     const pat = el("input", { class: "inp", type: "password", placeholder: "GitHub fine-grained PAT (data repo, Contents RW)" });
-    const key = el("input", { class: "inp", type: "password", placeholder: "Azure Foundry key (optional)" });
+    const key = el("input", { class: "inp", type: "password", placeholder: "Azure key (leave blank — prefer letting the proxy hold it)" });
     const exp = el("input", { class: "inp", type: "date" });
     const pass = el("input", { class: "inp", type: "password", placeholder: "passphrase (long!)" });
     const meter = el("div", { class: "muted small", text: "" });

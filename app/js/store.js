@@ -63,6 +63,9 @@
     foundryBaseUrl: "", claudeModel: "claude-opus-5",
     // Optional GPT via an Azure OpenAI chat/completions URL.
     gptEndpoint: "",
+    // When true, the browser omits the Azure key and the local proxy injects
+    // its own (from AZURE_API_KEY / -azure-key) — key never enters the app/blob.
+    proxyHoldsKey: false,
     noteModel: "claude", questionModel: "claude",
     theme: "dark",
   };

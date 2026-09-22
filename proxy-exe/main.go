@@ -20,6 +20,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -29,6 +30,9 @@ type proxyReq struct {
 	Method  string            `json:"method"`
 	Headers map[string]string `json:"headers"`
 	Body    json.RawMessage   `json:"body"`
+	// If set (e.g. "x-api-key" or "api-key"), the proxy injects its own locally
+	// held Azure key into that header — so the key never leaves this machine.
+	KeyHeader string `json:"keyHeader"`
 }
 
 type proxyResp struct {
@@ -40,7 +44,28 @@ var (
 	port       = flag.String("port", "8765", "port to listen on (localhost only)")
 	origin     = flag.String("origin", "*", "allowed CORS origin, e.g. https://you.github.io")
 	allowExtra = flag.String("allow", "", "comma-separated extra allowed host suffixes")
+	azureKey   = flag.String("azure-key", "", "Azure Foundry key to inject locally (else env AZURE_API_KEY)")
 )
+
+// localKey returns the Azure key the proxy will inject when asked, from the
+// -azure-key flag or the AZURE_API_KEY environment variable. Held in memory
+// only; never logged, never written anywhere.
+func localKey() string {
+	if *azureKey != "" {
+		return *azureKey
+	}
+	return os.Getenv("AZURE_API_KEY")
+}
+
+func keySource() string {
+	if *azureKey != "" {
+		return "-azure-key flag"
+	}
+	if os.Getenv("AZURE_API_KEY") != "" {
+		return "AZURE_API_KEY env"
+	}
+	return "(none — browser must supply the key)"
+}
 
 var defaultAllowed = []string{
 	".azure.com", ".microsoft.com", ".openai.azure.com",
@@ -118,6 +143,16 @@ func handleProxy(w http.ResponseWriter, r *http.Request) {
 	for k, v := range pr.Headers {
 		req.Header.Set(k, v)
 	}
+	// Inject the locally-held key if the caller asked us to (option 1).
+	if pr.KeyHeader != "" {
+		lk := localKey()
+		if lk == "" {
+			writeJSON(w, http.StatusOK, proxyResp{Status: 401,
+				Body: jsonStr("proxy has no Azure key — start it with AZURE_API_KEY=... or -azure-key")})
+			return
+		}
+		req.Header.Set(pr.KeyHeader, lk)
+	}
 	if req.Header.Get("Content-Type") == "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -166,9 +201,10 @@ func main() {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		w.Write([]byte("ok"))
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "keyLoaded": localKey() != ""})
 	})
 	addr := "127.0.0.1:" + *port // localhost ONLY — never 0.0.0.0
 	log.Printf("gate-prep proxy on http://%s  (origin=%s)  — stateless, logs no secrets", addr, *origin)
+	log.Printf("azure key source: %s", keySource())
 	log.Fatal(http.ListenAndServe(addr, mux))
 }

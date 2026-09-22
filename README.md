@@ -36,12 +36,16 @@ DOMPurify, js-yaml, hash-wasm.)
 
 1. **Two repos:** push this repo as **public** `gate-prep` → enable **GitHub Pages**
    (serves `app/`). Create a **private** `gate-prep-data` for your content.
-2. **Proxy:** `cd proxy-exe && go build -o gate-proxy.exe`, run it. (See its README.)
+2. **Proxy:** `cd proxy-exe && go build -o gate-proxy.exe`, then run it with your
+   Azure key so it stays on your desktop:
+   `$env:AZURE_API_KEY="<key>"; ./gate-proxy.exe`. In the app's Settings, tick
+   **"Local proxy supplies the Azure key."** (See its README.)
 3. **Azure:** deploy a Claude and/or GPT model in Azure AI Foundry; note the
-   endpoint URLs.
+   base URL + deployment name.
 4. **Encrypt your secrets once:** app → **Settings → Create encrypted secrets blob**
-   (paste a fine-grained, single-repo, short-lived PAT + Azure key + a strong
-   passphrase) → download `pat.enc.json` → commit it to the **public** repo.
+   (paste a fine-grained, single-repo, short-lived PAT + a strong passphrase —
+   leave the Azure key blank since the proxy holds it) → download `pat.enc.json`
+   → commit it to the **public** repo.
 5. In **Settings**, set the data repo owner/name, the public `pat.enc.json` URL,
    the proxy URL, the **Foundry base URL** (e.g. `https://<resource>.services.ai.azure.com/anthropic/`)
    and your **Claude deployment name** (e.g. `claude-fable-5`). Unlock with your

@@ -21,8 +21,11 @@
   const S = () => GP.store.state.settings;
   const azureKey = () => (GP.store.state.secrets || {}).azureKey;
 
-  function claudeReady() { return !!(S().proxyUrl && S().foundryBaseUrl && S().claudeModel && azureKey()); }
-  function gptReady() { return !!(S().proxyUrl && S().gptEndpoint && azureKey()); }
+  // The key can come from the browser (unlocked blob/session) OR the local proxy
+  // can hold it (settings.proxyHoldsKey) — in which case it never enters the app.
+  function keyAvailable() { return !!azureKey() || !!S().proxyHoldsKey; }
+  function claudeReady() { return !!(S().proxyUrl && S().foundryBaseUrl && S().claudeModel && keyAvailable()); }
+  function gptReady() { return !!(S().proxyUrl && S().gptEndpoint && keyAvailable()); }
   function proxyConfigured() { return claudeReady() || gptReady(); }
 
   // Choose provider by preference, falling back to whichever is configured.
@@ -35,13 +38,13 @@
     return null;
   }
 
-  async function callProxy(url, headers, body) {
+  async function callProxy(url, headers, body, keyHeader) {
     let res;
     try {
       res = await fetch(S().proxyUrl.replace(/\/$/, "") + "/proxy", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, method: "POST", headers, body }),
+        body: JSON.stringify({ url, method: "POST", headers, body, keyHeader: keyHeader || "" }),
       });
     } catch (e) {
       throw new Error("Can't reach the local proxy at " + S().proxyUrl + " — is gate-proxy.exe running? (" + e.message + ")");
@@ -59,20 +62,22 @@
 
   async function complete(provider, systemPrompt, userPrompt, maxTokens) {
     const key = azureKey();
-    if (!key) throw new Error("Locked — unlock to load your Azure key.");
+    const proxyKey = !key && S().proxyHoldsKey; // let the local proxy inject its key
+    if (!key && !proxyKey) throw new Error("No Azure key — unlock a key, or enable 'local proxy supplies the Azure key' in Settings.");
 
     if (provider === "claude") {
       const base = (S().foundryBaseUrl || "").replace(/\/+$/, "");
       if (!base) throw new Error("Set the Foundry base URL in Settings.");
       const url = base + "/v1/messages";
-      const headers = { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" };
+      const headers = { "content-type": "application/json", "anthropic-version": "2023-06-01" };
+      if (key) headers["x-api-key"] = key;
       const body = {
         model: S().claudeModel || "claude-opus-5",
         max_tokens: maxTokens || 2000,
         system: systemPrompt,
         messages: [{ role: "user", content: userPrompt }],
       };
-      const resp = await callProxy(url, headers, body);
+      const resp = await callProxy(url, headers, body, proxyKey ? "x-api-key" : "");
       const text = (resp.content || []).filter((b) => b && b.type === "text").map((b) => b.text).join("").trim();
       if (!text) throw new Error("Empty completion from Claude (" + JSON.stringify(resp).slice(0, 200) + ")");
       return text;
@@ -81,12 +86,13 @@
     // GPT — Azure OpenAI chat/completions (full URL incl. ?api-version=…)
     const url = S().gptEndpoint;
     if (!url) throw new Error("Set the GPT endpoint in Settings.");
-    const headers = { "content-type": "application/json", "api-key": key };
+    const headers = { "content-type": "application/json" };
+    if (key) headers["api-key"] = key;
     const body = {
       max_tokens: maxTokens || 2000,
       messages: [{ role: "system", content: systemPrompt }, { role: "user", content: userPrompt }],
     };
-    const resp = await callProxy(url, headers, body);
+    const resp = await callProxy(url, headers, body, proxyKey ? "api-key" : "");
     const text = ((resp.choices && resp.choices[0] && resp.choices[0].message && resp.choices[0].message.content) || "").trim();
     if (!text) throw new Error("Empty completion from GPT.");
     return text;
