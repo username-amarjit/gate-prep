@@ -77,9 +77,15 @@
         system: systemPrompt,
         messages: [{ role: "user", content: userPrompt }],
       };
-      // Opus/Sonnet 5 may default extended thinking ON — it eats the token budget
-      // (empty text block) and pollutes JSON. Disable unless the user opts back in.
-      if (S().disableThinking !== false) body.thinking = { type: "disabled" };
+      // Extended thinking (configured in Settings). Disabled by default for clean
+      // JSON; when enabled, reserve the budget and keep max_tokens comfortably above it.
+      if ((S().thinkingMode || "disabled") === "enabled") {
+        const budget = Math.max(1024, parseInt(S().thinkingBudget, 10) || 2048);
+        body.thinking = { type: "enabled", budget_tokens: budget };
+        body.max_tokens = Math.max(body.max_tokens, budget + 1200);
+      } else {
+        body.thinking = { type: "disabled" };
+      }
       const resp = await callProxy(url, headers, body, proxyKey ? "x-api-key" : "");
       const text = (resp.content || []).filter((b) => b && b.type === "text").map((b) => b.text).join("").trim();
       if (!text) {

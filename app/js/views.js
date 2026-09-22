@@ -531,9 +531,15 @@
     const holdsKey = el("input", { type: "checkbox" }); holdsKey.dataset.key = "proxyHoldsKey"; if (s.proxyHoldsKey) holdsKey.checked = true;
     az.appendChild(el("label", { class: "row gap", style: "margin:.4rem 0" }, [holdsKey,
       el("span", { text: "Local proxy supplies the Azure key (recommended — key stays on your desktop via AZURE_API_KEY, never in pat.enc.json)" })]));
-    const noThink = el("input", { type: "checkbox" }); noThink.dataset.key = "disableThinking"; if (s.disableThinking !== false) noThink.checked = true;
-    az.appendChild(el("label", { class: "row gap", style: "margin:.4rem 0" }, [noThink,
-      el("span", { text: "Disable extended thinking (faster, cheaper, reliable JSON — turn off only if the model rejects the parameter)" })]));
+    const thinkSel = el("select", { class: "inp" });
+    [["disabled", "Off — fast, cheap, reliable JSON"], ["enabled", "On — extended thinking"]].forEach(([val, lbl]) => {
+      const o = el("option", { value: val, text: lbl }); if ((s.thinkingMode || "disabled") === val) o.selected = true; thinkSel.appendChild(o);
+    });
+    thinkSel.dataset.key = "thinkingMode";
+    const budget = el("input", { class: "inp", type: "number", min: "1024", step: "512", value: s.thinkingBudget || 2048 });
+    budget.dataset.key = "thinkingBudget";
+    az.appendChild(field("Extended thinking (Claude)", thinkSel, "Off suits notes/questions here. Turn On only for hard reasoning — slower and more tokens; the model must support the parameter."));
+    az.appendChild(field("Thinking budget (tokens, when On)", budget, "Min 1024. The app keeps max_tokens above this automatically."));
     const noteModel = el("select", { class: "inp" }); ["claude", "gpt"].forEach((m) => { const o = el("option", { value: m, text: m }); if (s.noteModel === m) o.selected = true; noteModel.appendChild(o); }); noteModel.dataset.key = "noteModel";
     const qModel = el("select", { class: "inp" }); ["gpt", "claude"].forEach((m) => { const o = el("option", { value: m, text: m }); if (s.questionModel === m) o.selected = true; qModel.appendChild(o); }); qModel.dataset.key = "questionModel";
     az.appendChild(field("Model for notes", noteModel));
