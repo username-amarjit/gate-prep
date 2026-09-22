@@ -1,0 +1,51 @@
+name: Deploy app to GitHub Pages
+
+# Publishes the contents of app/ as the site root, so the site serves at
+#   https://<you>.github.io/<repo>/           (the app — not the README)
+# and your encrypted secrets blob, if committed at the repo root, at
+#   https://<you>.github.io/<repo>/pat.enc.json
+#
+# One-time setup after committing this file:
+#   Repo → Settings → Pages → Build and deployment → Source → "GitHub Actions".
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assemble site (app/ as root, plus pat.enc.json if present)
+        run: |
+          mkdir -p _site
+          cp -r app/. _site/
+          if [ -f pat.enc.json ]; then cp pat.enc.json _site/pat.enc.json; fi
+          # A .nojekyll file stops GitHub Pages from running Jekyll over the app.
+          touch _site/.nojekyll
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
