@@ -1,0 +1,14 @@
+{
+  "v": 1,
+  "kdf": "argon2id",
+  "params": {
+    "m": 262144,
+    "t": 3,
+    "p": 1
+  },
+  "salt": "t8LzE2kFQTdeNyksox4GCg==",
+  "iv": "4Uq/lzrQep18xkuh",
+  "ciphertext": "hDOzpAsAaytBg6luVX+PX5251FsgJGPrZP8ob71FbBgduD+DmaUBAmzTvu/ZGu/ZN+Jv/XZ0XDT+Pb4pZq5bFEYJBdR29WVFEBr1Bwt863rUsLx3htnjqDxsS+n+3Xm+gS8tTxYCTAgk0QEdcxE5PH38RM3MscJ7kgz6URhlHgRSOSBjtOCApERLnEkpwcBua4w=",
+  "pat_expires": "2026-10-22",
+  "created": "2026-09-22"
+}
