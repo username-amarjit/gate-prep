@@ -73,13 +73,19 @@
       if (key) headers["x-api-key"] = key;
       const body = {
         model: S().claudeModel || "claude-opus-5",
-        max_tokens: maxTokens || 2000,
+        max_tokens: maxTokens || 4000,
         system: systemPrompt,
         messages: [{ role: "user", content: userPrompt }],
       };
+      // Opus/Sonnet 5 may default extended thinking ON — it eats the token budget
+      // (empty text block) and pollutes JSON. Disable unless the user opts back in.
+      if (S().disableThinking !== false) body.thinking = { type: "disabled" };
       const resp = await callProxy(url, headers, body, proxyKey ? "x-api-key" : "");
       const text = (resp.content || []).filter((b) => b && b.type === "text").map((b) => b.text).join("").trim();
-      if (!text) throw new Error("Empty completion from Claude (" + JSON.stringify(resp).slice(0, 200) + ")");
+      if (!text) {
+        const sr = resp.stop_reason ? " (stop_reason=" + resp.stop_reason + ")" : "";
+        throw new Error("No text from Claude" + sr + " — raise max_tokens, or keep 'disable extended thinking' on in Settings.");
+      }
       return text;
     }
 
@@ -147,7 +153,7 @@
   async function note(nodeId, hint) {
     const provider = pickProvider(S().noteModel);
     if (!provider) return { body: demoNote(nodeId, hint), model: "demo" };
-    const body = await complete(provider, NOTE_SYSTEM, notePrompt(nodeId, hint), 3500);
+    const body = await complete(provider, NOTE_SYSTEM, notePrompt(nodeId, hint), 6000);
     return { body: body.trim(), model: provider + "-foundry" };
   }
 
@@ -164,6 +170,14 @@
     "Rules: exactly one unambiguous correct answer set; distractors must be plausible and encode common misconceptions; stay within GATE syllabus scope for this topic; prefer analysis/computation over definition recall; randomise which option letter is correct.",
   ].join("\n");
 
+  // Tolerant JSON parse: strips code fences and any prose around the object.
+  function extractJSON(text) {
+    let s = String(text).replace(/```json/gi, "").replace(/```/g, "").trim();
+    const a = s.indexOf("{"), b = s.lastIndexOf("}");
+    if (a >= 0 && b > a) s = s.slice(a, b + 1);
+    return JSON.parse(s);
+  }
+
   async function question(nodeId, hint, opts) {
     opts = opts || {};
     const n = GP.store.node(nodeId) || { title: nodeId };
@@ -176,10 +190,10 @@
     const raw = await complete(provider, Q_SYSTEM,
       "Set a GATE question on:\n" + path + "\nNode id: " + nodeId + "." +
       "\nTarget difficulty: learner Elo ≈ " + target + ". Calibrate so a student at ~" + target + " has roughly a 50% chance of solving it, and set difficulty_elo near " + target + "." +
-      (hint ? "\nEmphasis: " + hint : "") + notesCtx, 1600);
+      (hint ? "\nEmphasis: " + hint : "") + notesCtx, 5000);
     let obj;
-    try { obj = JSON.parse(raw.replace(/^```json\s*|\s*```$/g, "").trim()); }
-    catch (e) { throw new Error("Model did not return valid JSON."); }
+    try { obj = extractJSON(raw); }
+    catch (e) { throw new Error("Model did not return valid JSON: " + raw.slice(0, 120)); }
     return Object.assign({
       id: nodeId.replace(/\./g, "-") + "-" + Date.now().toString(36),
       node_id: nodeId, source: "generated", difficulty_elo: target,

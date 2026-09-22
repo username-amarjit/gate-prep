@@ -66,6 +66,9 @@
     // When true, the browser omits the Azure key and the local proxy injects
     // its own (from AZURE_API_KEY / -azure-key) — key never enters the app/blob.
     proxyHoldsKey: false,
+    // Opus/Sonnet 5 can default extended thinking ON, which empties/pollutes
+    // output. Disable it by default for clean, reliable generation.
+    disableThinking: true,
     noteModel: "claude", questionModel: "claude",
     theme: "dark",
   };
