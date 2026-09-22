@@ -1,0 +1,16 @@
+# secrets must never be committed to this PUBLIC repo except the encrypted blob
+*.env
+.env
+secrets.json
+
+# the ONLY secret-bearing file allowed is the passphrase-encrypted blob:
+!pat.enc.json
+
+# build output
+proxy-exe/gate-proxy
+proxy-exe/gate-proxy.exe
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.log

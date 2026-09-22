@@ -1,0 +1,20 @@
+{
+  "id": "toc-regular-001",
+  "node_id": "toc.regular",
+  "type": "MSQ",
+  "source": "generated",
+  "difficulty_elo": 1250,
+  "model": "claude-opus-via-foundry",
+  "verified": true,
+  "stem_md": "Which of the following languages over $\\Sigma=\\{a,b\\}$ are **regular**? *(Select all that apply.)*",
+  "options": [
+    { "id": "A", "md": "$\\{a^n b^n \\mid n \\ge 0\\}$" },
+    { "id": "B", "md": "$\\{w \\mid w \\text{ has an even number of } a\\text{'s}\\}$" },
+    { "id": "C", "md": "$(ab)^*$" },
+    { "id": "D", "md": "$\\{a^p \\mid p \\text{ is prime}\\}$" }
+  ],
+  "answer": ["B", "C"],
+  "solution_md": "**A** and **D** are the classic non-regular languages (provable via the pumping lemma). **B** is recognised by a 2-state DFA tracking parity; **C** is literally a regular expression.",
+  "assets": [],
+  "tags": ["regular-languages", "closure"]
+}
