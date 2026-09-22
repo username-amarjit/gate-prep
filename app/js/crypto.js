@@ -19,8 +19,9 @@
     const p = params || KDF;
     const raw = await window.hashwasm.argon2id({
       password: passphrase, salt: saltBytes,
-      parallelism: p.p, iterations: p.t, memorySize: p.m,
-      hashLength: p.hashLen, outputType: "binary",
+      parallelism: p.p || KDF.p, iterations: p.t || KDF.t, memorySize: p.m || KDF.m,
+      hashLength: KDF.hashLen, // always 32 bytes for AES-256 (blob params omit this)
+      outputType: "binary",
     });
     return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
   }
