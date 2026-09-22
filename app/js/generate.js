@@ -101,6 +101,8 @@
   const NOTE_SYSTEM = [
     "You are an expert GATE CS/IT tutor. Write exam-focused, technically precise revision notes for ONE syllabus topic.",
     "",
+    "SCOPE (STRICT): Include ONLY material within the official GATE CS/IT syllabus for THIS topic. Exclude university-level tangents, history, derivations GATE never asks, and advanced content outside the syllabus. If a commonly-taught point is out of GATE scope, omit it (at most a one-line 'beyond GATE scope' aside). Every statement must be standard, textbook-correct, and GATE-relevant — when unsure whether something is in scope, leave it out.",
+    "",
     "OUTPUT: GitHub-Flavored Markdown only. Do NOT include a top-level H1 title (the app shows it). Use ## and ### headings.",
     "MATH: KaTeX — $...$ inline, $$...$$ for display. TABLES: Markdown tables. DIAGRAMS: ```mermaid fenced blocks",
     "(stateDiagram-v2 for automata, erDiagram for ER, flowchart/graph for processes, trees/graphs) placed EXACTLY where they aid understanding.",
@@ -151,6 +153,7 @@
 
   const Q_SYSTEM = [
     "You are an IIT professor who sets the GATE CS/IT examination. Produce ONE original, exam-quality question at genuine GATE difficulty for the given topic — testing understanding and application, not mere recall.",
+    "SCOPE (STRICT): The question AND its solution must rely ONLY on the GATE CS/IT syllabus for this topic — no out-of-syllabus facts, no dependence on non-GATE knowledge or obscure trivia. It must be solvable by a well-prepared GATE candidate using standard syllabus concepts, and must match the style GATE actually uses. If you cannot make an in-scope question, make it simpler rather than going outside the syllabus.",
     "Return ONLY a strict JSON object (no prose, no markdown, no code fence) with keys:",
     '  "type"        : "MCQ" (exactly one correct) | "MSQ" (one or more correct) | "NAT" (numerical answer)',
     '  "stem_md"     : the question in Markdown; use $...$ for math, and Markdown tables or ```mermaid``` if the question needs a figure',
@@ -161,22 +164,76 @@
     "Rules: exactly one unambiguous correct answer set; distractors must be plausible and encode common misconceptions; stay within GATE syllabus scope for this topic; prefer analysis/computation over definition recall; randomise which option letter is correct.",
   ].join("\n");
 
-  async function question(nodeId, hint) {
+  async function question(nodeId, hint, opts) {
+    opts = opts || {};
     const n = GP.store.node(nodeId) || { title: nodeId };
     const provider = pickProvider(S().questionModel);
     if (!provider) return demoQuestion(nodeId);
+    // Explicit targetElo (e.g. a calibration ladder) overrides the learner's rating.
+    const target = opts.targetElo || GP.store.ratingOf(nodeId); // 1200 if no prior record, else current Elo
     const path = GP.store.ancestors(nodeId).map((a) => a.title).concat(n.title).join(" › ");
     const notesCtx = GP.store.getNote(nodeId) ? "\n\nReference notes (for grounding; do not quote):\n" + GP.store.getNote(nodeId).body.slice(0, 1800) : "";
     const raw = await complete(provider, Q_SYSTEM,
-      "Set a GATE question on:\n" + path + "\nNode id: " + nodeId + "." + (hint ? "\nEmphasis: " + hint : "") + notesCtx, 1600);
+      "Set a GATE question on:\n" + path + "\nNode id: " + nodeId + "." +
+      "\nTarget difficulty: learner Elo ≈ " + target + ". Calibrate so a student at ~" + target + " has roughly a 50% chance of solving it, and set difficulty_elo near " + target + "." +
+      (hint ? "\nEmphasis: " + hint : "") + notesCtx, 1600);
     let obj;
     try { obj = JSON.parse(raw.replace(/^```json\s*|\s*```$/g, "").trim()); }
     catch (e) { throw new Error("Model did not return valid JSON."); }
     return Object.assign({
       id: nodeId.replace(/\./g, "-") + "-" + Date.now().toString(36),
-      node_id: nodeId, source: "generated", difficulty_elo: 1200,
+      node_id: nodeId, source: "generated", difficulty_elo: target,
       model: provider + "-foundry", verified: false,
     }, obj);
+  }
+
+  // Sequential batch generation with progress + cancel; saves locally (no per-item
+  // commit) so the caller can push everything in one commit at the end.
+  // Sleep `ms`, ticking onWait(secondsLeft) each second; returns early on cancel.
+  function sleepWithCountdown(ms, onWait, shouldCancel) {
+    return new Promise((resolve) => {
+      const end = Date.now() + ms;
+      (function tick() {
+        const left = end - Date.now();
+        if (left <= 0 || (shouldCancel && shouldCancel())) { onWait && onWait(0); return resolve(); }
+        onWait && onWait(Math.ceil(left / 1000));
+        setTimeout(tick, Math.min(1000, left));
+      })();
+    });
+  }
+
+  async function batchGenerate(kind, ids, opts) {
+    opts = opts || {};
+    // For questions, opts.targets = an Elo ladder ⇒ that many questions per topic.
+    const targets = (kind === "questions" && opts.targets && opts.targets.length) ? opts.targets : null;
+    const perItem = targets ? targets.length : 1;
+    const res = { total: ids.length * perItem, done: 0, ok: 0, failed: 0, errors: [], cancelled: false };
+    // Fresh random pacing per gap: 15–20 s between model calls (override via opts.delayMs).
+    const paced = () => (opts.delayMs != null ? opts.delayMs : 15000 + Math.floor(Math.random() * 5001));
+    for (const id of ids) {
+      for (let k = 0; k < perItem; k++) {
+        if (opts.shouldCancel && opts.shouldCancel()) { res.cancelled = true; break; }
+        opts.onProgress && opts.onProgress(res, id);
+        try {
+          if (kind === "notes") {
+            const g = await note(id);
+            await GP.store.saveNote(id, { body: g.body, model: g.model, status: "draft", rating: GP.store.ratingOf(id) }, { commit: false });
+          } else {
+            const q = await question(id, null, { targetElo: targets ? targets[k] : undefined });
+            await GP.store.addQuestion(q, { commit: false });
+          }
+          res.ok++;
+        } catch (e) { res.failed++; res.errors.push({ id: id, error: e.message }); }
+        res.done++;
+        opts.onProgress && opts.onProgress(res, null);
+        // Pace before the NEXT call (skip after the final one / on cancel).
+        if (res.done < res.total && !(opts.shouldCancel && opts.shouldCancel())) {
+          await sleepWithCountdown(paced(), opts.onWait, opts.shouldCancel);
+        }
+      }
+      if (res.cancelled) break;
+    }
+    return res;
   }
 
   // Connectivity/generation smoke test used by Settings → "Test generation".
@@ -220,5 +277,5 @@
     };
   }
 
-  GP.generate = { note, question, test, proxyConfigured, claudeReady, gptReady };
+  GP.generate = { note, question, test, batchGenerate, proxyConfigured, claudeReady, gptReady };
 })();

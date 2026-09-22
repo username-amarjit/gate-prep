@@ -132,8 +132,83 @@
       el("h1", { text: s.title }),
       el("a", { class: "btn", href: "#/book/" + encodeURIComponent(id), text: "📖 Read this subject" }),
     ]));
+    v.appendChild(el("div", { class: "row gap", style: "margin-bottom:.6rem" }, [
+      el("button", { class: "btn", text: "✨ Missing notes", onClick: () => batchForScope(id, "notes", "missing") }),
+      el("button", { class: "btn", text: "✨ All notes", onClick: () => batchForScope(id, "notes", "all") }),
+      el("button", { class: "btn", text: "❓ 10 Q/topic (missing)", onClick: () => batchForScope(id, "questions", "missing") }),
+      el("button", { class: "btn", text: "❓ 10 Q/topic (all)", onClick: () => batchForScope(id, "questions", "all") }),
+    ]));
     v.appendChild(treeList(id, { openDepth: 2 }));
     return v;
+  }
+
+  // ---- batch generation ----------------------------------------------------
+  const QSET = 10; // questions per topic (calibration ladder size)
+  // A low→(extremely) high Elo ladder so a first quiz places the student well.
+  function calibrationElos(n) {
+    const lo = 900, hi = 1900;
+    if (n <= 1) return [1200];
+    const step = (hi - lo) / (n - 1);
+    return Array.from({ length: n }, (_, i) => Math.round(lo + i * step));
+  }
+  function leavesUnder(rootId) {
+    const all = rootId ? store.descendants(rootId) : store.state.nodes;
+    return all.filter((n) => store.childrenOf(n.id).length === 0);
+  }
+  // kind: "notes"|"questions"; mode: "missing"|"all"
+  function batchForScope(rootId, kind, mode) {
+    const leaves = leavesUnder(rootId);
+    const label = rootId ? store.titleOf(rootId) : "whole syllabus";
+    let ids, extra = {};
+    if (kind === "notes") {
+      ids = (mode === "all" ? leaves : leaves.filter((n) => !store.getNote(n.id))).map((n) => n.id);
+    } else {
+      ids = (mode === "all" ? leaves : leaves.filter((n) => store.questionsFor(n.id).length === 0)).map((n) => n.id);
+      extra.targets = calibrationElos(QSET);
+    }
+    if (!ids.length) { toast("Nothing to do for " + label + " (already present).", "ok"); return; }
+    if (!GP.generate.proxyConfigured()) { toast("Configure Azure in Settings first — batch would only make demo content.", "warn"); return; }
+    const calls = kind === "questions" ? ids.length * QSET : ids.length;
+    const what = kind === "questions" ? (ids.length + " topics × " + QSET + " = " + calls + " questions") : (ids.length + " notes");
+    if (!confirm("Generate " + what + " for " + label + "?\n" + calls + " model calls — mind the time + Azure cost.")) return;
+    runBatch(kind, ids, label, extra);
+  }
+  // A varied-difficulty set for ONE topic (the "first quiz" placement set).
+  function genQuestionSet(nodeId, count) {
+    if (!GP.generate.proxyConfigured()) { toast("Configure Azure in Settings first.", "warn"); return; }
+    runBatch("questions", [nodeId], store.titleOf(nodeId) + " — calibration", { targets: calibrationElos(count || QSET) });
+  }
+  function runBatch(kind, ids, label, extra) {
+    let cancelled = false, finished = false;
+    const bar = el("div", { class: "muted", text: "Starting…" });
+    const waitLine = el("div", { class: "small muted", style: "margin-top:.2rem" });
+    const errbox = el("div", { class: "small warn-text", style: "margin-top:.4rem; max-height:8rem; overflow:auto" });
+    const btn = el("button", { class: "btn", text: "Cancel", onClick: () => {
+      if (finished) { overlay.remove(); route(); } else { cancelled = true; btn.textContent = "Cancelling…"; }
+    } });
+    const box = el("div", { class: "modal" }, [el("h2", { text: "Generating " + kind + " — " + label }), bar, waitLine, errbox, el("div", { class: "row gap", style: "margin-top:.6rem" }, [btn])]);
+    const overlay = el("div", { class: "overlay" }, [box]);
+    document.body.appendChild(overlay);
+    GP.generate.batchGenerate(kind, ids, Object.assign({
+      shouldCancel: () => cancelled,
+      onProgress: (res, curId) => {
+        bar.textContent = res.done + " / " + res.total + " done"
+          + (curId ? " · now: " + store.titleOf(curId) : "")
+          + (res.failed ? " · " + res.failed + " failed" : "");
+      },
+      onWait: (secs) => { waitLine.textContent = secs > 0 ? "⏳ pacing to respect rate limits — next call in " + secs + "s" : ""; },
+    }, extra || {})).then(async (res) => {
+      finished = true;
+      waitLine.textContent = "";
+      bar.textContent = "Generated " + res.ok + "/" + res.total + (res.cancelled ? " (cancelled)" : "") + ". ";
+      if (res.errors.length) errbox.textContent = res.errors.slice(0, 8).map((e) => store.titleOf(e.id) + ": " + e.error).join("  |  ");
+      if (store.githubReady() && res.ok) {
+        bar.textContent += "Committing to repo…";
+        try { const sha = await store.pushAllToRepo(); bar.textContent = "Done — " + res.ok + " generated, committed " + String(sha).slice(0, 7) + "."; }
+        catch (e) { bar.textContent += " commit failed: " + e.message; }
+      }
+      btn.textContent = "Close";
+    });
   }
 
   // ---- Note page -----------------------------------------------------------
@@ -148,6 +223,7 @@
       el("div", { class: "row gap" }, [
         el("button", { class: "btn", text: note ? "✏️ Edit" : "✏️ Write", onClick: () => editNote(id) }),
         el("button", { class: "btn", text: "✨ " + (note ? "Regenerate" : "Generate"), onClick: () => regenerate(id) }),
+        el("button", { class: "btn", text: "🎯 10-Q set", onClick: () => genQuestionSet(id, 10) }),
         el("a", { class: "btn", href: "#/quiz?node=" + encodeURIComponent(id), text: "❓ Quiz this" }),
       ]),
     ]);
@@ -271,13 +347,15 @@
     const v = el("div", { class: "page quiz" });
     const scope = params && params.node;
     let qs = scope ? store.questionsFor(scope) : store.state.questions.slice();
-    // weakest-first: sort by node rating ascending
-    qs.sort((a, b) => store.ratingOf(a.node_id) - store.ratingOf(b.node_id) || Math.random() - 0.5);
+    // weakest node first; within a node, easy→hard so a calibration set ladders up
+    qs.sort((a, b) => (store.ratingOf(a.node_id) - store.ratingOf(b.node_id))
+      || ((a.difficulty_elo || 1200) - (b.difficulty_elo || 1200)) || (Math.random() - 0.5));
     if (!qs.length) {
       v.appendChild(el("h1", { text: "Quiz" }));
       v.appendChild(el("div", { class: "empty" }, [
-        el("p", { text: scope ? "No questions for this topic yet." : "No questions yet." }),
-        scope ? el("button", { class: "btn primary", text: "✨ Generate one", onClick: () => genQuestion(scope) }) : null,
+        el("p", { text: scope ? "No questions for this topic yet." : "No questions yet — open a topic and generate a set." }),
+        scope ? el("button", { class: "btn primary", text: "🎯 Generate a 10-question set (varied difficulty)", onClick: () => genQuestionSet(scope, 10) }) : null,
+        scope ? el("button", { class: "btn", text: "✨ Just one", onClick: () => genQuestion(scope) }) : null,
       ]));
       return v;
     }
@@ -479,6 +557,16 @@
       el("button", { class: "btn", text: "Rebuild cache from repo", onClick: () => store.rebuildCacheFromRepo().then(() => { toast("Cache rebuilt", "ok"); route(); }).catch((e) => toast(e.message, "warn")) }),
     ]));
     v.appendChild(data);
+
+    const gen = el("div", { class: "card" }, [el("h3", { text: "Batch generation (whole syllabus)" })]);
+    gen.appendChild(el("div", { class: "row gap" }, [
+      el("button", { class: "btn", text: "✨ Missing notes", onClick: () => { saveFrom(v); batchForScope(null, "notes", "missing"); } }),
+      el("button", { class: "btn", text: "✨ All notes", onClick: () => { saveFrom(v); batchForScope(null, "notes", "all"); } }),
+      el("button", { class: "btn", text: "❓ 10 Q/topic (missing)", onClick: () => { saveFrom(v); batchForScope(null, "questions", "missing"); } }),
+      el("button", { class: "btn", text: "❓ 10 Q/topic (all)", onClick: () => { saveFrom(v); batchForScope(null, "questions", "all"); } }),
+    ]));
+    gen.appendChild(el("div", { class: "muted small", text: "Across every leaf topic in the syllabus. '10 Q/topic' generates a low→high difficulty ladder per topic. Easily 100s of model calls — mind the time and Azure cost. Commits once at the end. (Per-subject buttons live on each subject page.)" }));
+    v.appendChild(gen);
 
     v.appendChild(el("div", { class: "row gap sticky-save" }, [
       el("button", { class: "btn primary", text: "💾 Save settings", onClick: () => { saveFrom(v); toast("Saved", "ok"); } }),

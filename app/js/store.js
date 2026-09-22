@@ -179,7 +179,8 @@
 
   // ---- notes ---------------------------------------------------------------
   function getNote(id) { return state.notes[id] || null; }
-  async function saveNote(id, patch) {
+  async function saveNote(id, patch, opts) {
+    opts = opts || {};
     const prev = state.notes[id] || {};
     const n = Object.assign({}, prev, patch, {
       title: patch.title || prev.title || titleOf(id),
@@ -187,7 +188,7 @@
     });
     state.notes[id] = n;
     await idbSet("notes", state.notes);
-    if (githubReady()) {
+    if (opts.commit !== false && githubReady()) {
       try { await GP.github.commitNote(id, n); toast("Committed note to GitHub", "ok"); }
       catch (e) { toast("Saved locally; GitHub commit failed: " + e.message, "warn"); }
     }
@@ -204,10 +205,11 @@
     const ids = new Set([id, ...descendants(id).map((n) => n.id)]);
     return state.questions.filter((q) => ids.has(q.node_id));
   }
-  async function addQuestion(q) {
+  async function addQuestion(q, opts) {
+    opts = opts || {};
     state.questions.push(q);
     await idbSet("questions", state.questions);
-    if (githubReady()) { try { await GP.github.commitQuestion(q); } catch (e) { /* best-effort */ } }
+    if (opts.commit !== false && githubReady()) { try { await GP.github.commitQuestion(q); } catch (e) { /* best-effort */ } }
   }
 
   // ---- ratings / attempts --------------------------------------------------
