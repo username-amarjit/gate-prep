@@ -435,8 +435,13 @@
       el("button", { class: "btn", text: "Test connection", onClick: () => {
         saveFrom(v); GP.github.testConnection().then((r) => toast("OK — " + r.full_name + (r.private ? " (private)" : ""), "ok")).catch((e) => toast(e.message, "warn"));
       }}),
+      el("button", { class: "btn primary", text: "⬆ Push all to repo", onClick: () => {
+        saveFrom(v); toast("Pushing everything to the repo…", "info");
+        store.pushAllToRepo().then((sha) => toast("Pushed. Commit " + String(sha).slice(0, 7) + " — check your repo.", "ok")).catch((e) => toast("Push failed: " + e.message, "warn"));
+      }}),
       el("button", { class: "btn", text: "Pull from repo", onClick: () => { saveFrom(v); store.pullFromRepo().then(() => { toast("Pulled", "ok"); route(); }).catch((e) => toast(e.message, "warn")); } }),
     ]));
+    gh.appendChild(el("div", { class: "muted small", text: "Push all writes syllabus_tree.json, study_path.json, all notes, questions and index.json in one commit (also initialises an empty repo). Individual note/tree edits commit automatically after that." }));
     v.appendChild(gh);
 
     // Azure / proxy
@@ -452,7 +457,15 @@
     const qModel = el("select", { class: "inp" }); ["gpt", "claude"].forEach((m) => { const o = el("option", { value: m, text: m }); if (s.questionModel === m) o.selected = true; qModel.appendChild(o); }); qModel.dataset.key = "questionModel";
     az.appendChild(field("Model for notes", noteModel));
     az.appendChild(field("Model for questions", qModel));
-    az.appendChild(el("div", { class: "muted small", text: GP.generate.proxyConfigured() ? "✓ Proxy + endpoints + key present." : "Generation runs in DEMO mode until proxy URL, an endpoint and an unlocked Azure key are all set." }));
+    az.appendChild(el("div", { class: "muted small", text: GP.generate.proxyConfigured() ? "✓ Proxy + endpoint + key present." : "Generation runs in DEMO mode until the proxy URL, Foundry base URL + deployment, and a key (or proxy-holds-key) are all set." }));
+    const testOut = el("div", { class: "muted small", style: "margin-top:.4rem" });
+    az.appendChild(el("button", { class: "btn", text: "🧪 Test generation", onClick: () => {
+      saveFrom(v); testOut.textContent = "Testing (browser → proxy → Foundry)…"; testOut.className = "muted small";
+      GP.generate.test()
+        .then((r) => { testOut.textContent = "✓ " + r.provider + " replied: " + r.text; testOut.className = "small ok-text"; })
+        .catch((e) => { testOut.textContent = "✗ " + e.message; testOut.className = "small warn-text"; });
+    } }));
+    az.appendChild(testOut);
     v.appendChild(az);
 
     // Secrets blob tool

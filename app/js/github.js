@@ -68,6 +68,11 @@
     const commit = await api(repoPath() + "/git/commits/" + ref.object.sha);
     return { commitSha: ref.object.sha, treeSha: commit.tree.sha };
   }
+  // null when the branch/repo has no commits yet (fresh, empty repo)
+  async function getRefSafe() {
+    try { return await getRef(); }
+    catch (e) { if (/\b404\b/.test(e.message) || /Not Found/i.test(e.message)) return null; throw e; }
+  }
   async function getTree() {
     const { treeSha } = await getRef();
     return api(repoPath() + "/git/trees/" + treeSha + "?recursive=1");
@@ -121,7 +126,7 @@
   // files: [{ path, content (string), delete? }]
   async function commitFiles(files, message) {
     if (!PAT()) throw new Error("Locked — unlock with your passphrase first.");
-    const { commitSha, treeSha } = await getRef();
+    const ref = await getRefSafe(); // null => empty repo, we'll create the branch
     const treeItems = [];
     for (const f of files) {
       if (f.delete) { treeItems.push({ path: f.path, mode: "100644", type: "blob", sha: null }); continue; }
@@ -131,16 +136,33 @@
       });
       treeItems.push({ path: f.path, mode: "100644", type: "blob", sha: blob.sha });
     }
-    const newTree = await api(repoPath() + "/git/trees", {
-      method: "POST", body: JSON.stringify({ base_tree: treeSha, tree: treeItems }),
-    });
+    const treeBody = { tree: treeItems };
+    if (ref) treeBody.base_tree = ref.treeSha;
+    const newTree = await api(repoPath() + "/git/trees", { method: "POST", body: JSON.stringify(treeBody) });
     const commit = await api(repoPath() + "/git/commits", {
-      method: "POST", body: JSON.stringify({ message: message || "update", tree: newTree.sha, parents: [commitSha] }),
+      method: "POST",
+      body: JSON.stringify({ message: message || "update", tree: newTree.sha, parents: ref ? [ref.commitSha] : [] }),
     });
-    await api(repoPath() + "/git/refs/heads/" + branch(), {
-      method: "PATCH", body: JSON.stringify({ sha: commit.sha }),
-    });
+    if (ref) {
+      await api(repoPath() + "/git/refs/heads/" + branch(), { method: "PATCH", body: JSON.stringify({ sha: commit.sha }) });
+    } else {
+      // initialise the empty repo: create the branch ref at the first commit
+      await api(repoPath() + "/git/refs", { method: "POST", body: JSON.stringify({ ref: "refs/heads/" + branch(), sha: commit.sha }) });
+    }
     return commit.sha;
+  }
+
+  // Push the entire current state to the repo in ONE commit (init / backup).
+  async function pushAll() {
+    const st = GP.store.state;
+    const files = [
+      { path: "syllabus_tree.json", content: JSON.stringify(st.syllabus, null, 2) },
+      { path: "study_path.json", content: JSON.stringify(st.studyPath, null, 2) },
+      indexFile(),
+    ];
+    Object.keys(st.notes).forEach((id) => files.push({ path: idToNotePath(id), content: serializeNote(id, st.notes[id]) }));
+    (st.questions || []).forEach((q) => files.push({ path: idToQuestionPath(q.node_id, q.id), content: JSON.stringify(q, null, 2) }));
+    return commitFiles(files, "sync: push full state (" + Object.keys(st.notes).length + " notes, " + (st.questions || []).length + " questions)");
   }
 
   const indexFile = () => ({ path: "index.json", content: JSON.stringify(GP.store.buildIndex(), null, 2) });
@@ -174,7 +196,7 @@
   }
 
   GP.github = {
-    pullAll, commitFiles, commitNote, deleteNote, commitQuestion, commitTree, commitStudyPath,
+    pullAll, pushAll, commitFiles, commitNote, deleteNote, commitQuestion, commitTree, commitStudyPath,
     testConnection, getFileText, serializeNote, parseNote,
     idToNotePath, notePathToId,
   };

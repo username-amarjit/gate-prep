@@ -98,16 +98,46 @@
     return text;
   }
 
-  const NOTE_SYSTEM =
-    "You write concise, exam-accurate revision notes for the Indian GATE CS/IT examination. " +
-    "Use GitHub-flavoured Markdown. Use $...$ / $$...$$ for math (KaTeX), Markdown tables for tabular data, " +
-    "and ```mermaid fenced blocks for diagrams (state machines, ER, flowcharts, trees). Be rigorous and " +
-    "GATE-depth: definitions, key results, one worked example, and common pitfalls. Do NOT include a title heading.";
+  const NOTE_SYSTEM = [
+    "You are an expert GATE CS/IT tutor. Write exam-focused, technically precise revision notes for ONE syllabus topic.",
+    "",
+    "OUTPUT: GitHub-Flavored Markdown only. Do NOT include a top-level H1 title (the app shows it). Use ## and ### headings.",
+    "MATH: KaTeX — $...$ inline, $$...$$ for display. TABLES: Markdown tables. DIAGRAMS: ```mermaid fenced blocks",
+    "(stateDiagram-v2 for automata, erDiagram for ER, flowchart/graph for processes, trees/graphs) placed EXACTLY where they aid understanding.",
+    "Be correct and use standard GATE notation. High signal, no filler — accuracy over length.",
+    "",
+    "Use EXACTLY these sections, in this order (skip one only if genuinely not applicable):",
+    "## Overview  — rigorous, first-principles explanation at GATE depth.",
+    "## Key results & formulas  — the theorems/results/formulas that matter, with their conditions. Put any relevant table or diagram right here (or wherever it belongs in the flow).",
+    "## Caveats & common pitfalls  — subtle points, edge cases, and the specific mistakes students make.",
+    "## GATE focus  — what GATE has historically tested here, the question styles (conceptual vs numerical), recurring tricks, and exactly what to pay attention to.",
+    "## Worked examples  — 1–2 examples worked step by step to build intuition.",
+    "## Related topics  — bullets linking related nodes as [[node_id]]; one line each on the relationship AND how that connection can be asked in GATE. Use ONLY node ids from the provided 'Related node ids' list; never invent ids.",
+  ].join("\n");
+
+  // Candidate ids the model may [[link]] — everything in the same subject.
+  function relatedCandidates(nodeId) {
+    const subj = GP.store.subjectOf(nodeId);
+    if (!subj) return "";
+    return [subj].concat(GP.store.descendants(subj.id))
+      .filter((n) => n.id !== nodeId)
+      .slice(0, 60).map((n) => "- " + n.id + " — " + n.title).join("\n");
+  }
+  // Ground the "GATE focus" section in any PYQs we already hold for this node.
+  function pyqContext(nodeId) {
+    const qs = GP.store.questionsFor(nodeId).slice(0, 5);
+    if (!qs.length) return "";
+    return "\n\nPast/related questions on this node (inform 'GATE focus'; do not copy verbatim):\n" +
+      qs.map((q, i) => (i + 1) + ". [" + (q.source || "") + "] " + (q.stem_md || "").replace(/\s+/g, " ").slice(0, 240)).join("\n");
+  }
 
   function notePrompt(nodeId, hint) {
     const n = GP.store.node(nodeId) || { title: nodeId };
     const path = GP.store.ancestors(nodeId).map((a) => a.title).concat(n.title).join(" › ");
-    let p = "Write GATE-depth revision notes for the topic:\n\n" + path + "\n\nNode id: " + nodeId + ".";
+    const cands = relatedCandidates(nodeId);
+    let p = "Topic: " + path + "\nNode id: " + nodeId + "  (level: " + (n.level || "learning_point") + ").";
+    if (cands) p += "\n\nRelated node ids you may link with [[id]] (use only these):\n" + cands;
+    p += pyqContext(nodeId);
     if (hint) p += "\n\nEmphasis / clarifying instruction: " + hint;
     return p;
   }
@@ -115,23 +145,30 @@
   async function note(nodeId, hint) {
     const provider = pickProvider(S().noteModel);
     if (!provider) return { body: demoNote(nodeId, hint), model: "demo" };
-    const body = await complete(provider, NOTE_SYSTEM, notePrompt(nodeId, hint), 2200);
+    const body = await complete(provider, NOTE_SYSTEM, notePrompt(nodeId, hint), 3500);
     return { body: body.trim(), model: provider + "-foundry" };
   }
 
-  const Q_SYSTEM =
-    "You are a GATE CS/IT question setter. Produce ONE question as strict JSON with keys: " +
-    "type ('MCQ'|'MSQ'|'NAT'), stem_md, options (array of {id,md} for MCQ/MSQ; omit for NAT), " +
-    "answer (array of option ids, or {value,tol} for NAT), solution_md. Use $...$ for math. " +
-    "Return ONLY the JSON object, no prose, no code fence.";
+  const Q_SYSTEM = [
+    "You are an IIT professor who sets the GATE CS/IT examination. Produce ONE original, exam-quality question at genuine GATE difficulty for the given topic — testing understanding and application, not mere recall.",
+    "Return ONLY a strict JSON object (no prose, no markdown, no code fence) with keys:",
+    '  "type"        : "MCQ" (exactly one correct) | "MSQ" (one or more correct) | "NAT" (numerical answer)',
+    '  "stem_md"     : the question in Markdown; use $...$ for math, and Markdown tables or ```mermaid``` if the question needs a figure',
+    '  "options"     : array of {"id":"A","md":"..."} for MCQ/MSQ; OMIT entirely for NAT',
+    '  "answer"      : array of correct option ids for MCQ/MSQ, or {"value": <number>, "tol": <number>} for NAT',
+    '  "solution_md" : a concise, correct explanation of WHY the answer holds and why the main distractors fail',
+    '  "difficulty_elo" : integer 1000–1600 estimating difficulty',
+    "Rules: exactly one unambiguous correct answer set; distractors must be plausible and encode common misconceptions; stay within GATE syllabus scope for this topic; prefer analysis/computation over definition recall; randomise which option letter is correct.",
+  ].join("\n");
 
   async function question(nodeId, hint) {
     const n = GP.store.node(nodeId) || { title: nodeId };
     const provider = pickProvider(S().questionModel);
     if (!provider) return demoQuestion(nodeId);
-    const notesCtx = GP.store.getNote(nodeId) ? "\n\nReference notes:\n" + GP.store.getNote(nodeId).body.slice(0, 1500) : "";
+    const path = GP.store.ancestors(nodeId).map((a) => a.title).concat(n.title).join(" › ");
+    const notesCtx = GP.store.getNote(nodeId) ? "\n\nReference notes (for grounding; do not quote):\n" + GP.store.getNote(nodeId).body.slice(0, 1800) : "";
     const raw = await complete(provider, Q_SYSTEM,
-      "Create a GATE-style question for: " + n.title + " (" + nodeId + ")." + (hint ? " " + hint : "") + notesCtx, 1200);
+      "Set a GATE question on:\n" + path + "\nNode id: " + nodeId + "." + (hint ? "\nEmphasis: " + hint : "") + notesCtx, 1600);
     let obj;
     try { obj = JSON.parse(raw.replace(/^```json\s*|\s*```$/g, "").trim()); }
     catch (e) { throw new Error("Model did not return valid JSON."); }
@@ -140,6 +177,14 @@
       node_id: nodeId, source: "generated", difficulty_elo: 1200,
       model: provider + "-foundry", verified: false,
     }, obj);
+  }
+
+  // Connectivity/generation smoke test used by Settings → "Test generation".
+  async function test() {
+    const provider = pickProvider(S().noteModel);
+    if (!provider) throw new Error("Set the proxy URL, Foundry base URL + deployment, and a key (or enable proxy-holds-key) first.");
+    const text = await complete(provider, "You are a connectivity test.", "Reply with exactly the single word: PONG", 16);
+    return { provider, text: text.trim() };
   }
 
   // ---- demo fallbacks (no Azure needed) -----------------------------------
@@ -175,5 +220,5 @@
     };
   }
 
-  GP.generate = { note, question, proxyConfigured, claudeReady, gptReady };
+  GP.generate = { note, question, test, proxyConfigured, claudeReady, gptReady };
 })();

@@ -33,6 +33,10 @@ in the app's Settings:
 # Windows PowerShell
 $env:AZURE_API_KEY="<your-foundry-key>"; ./gate-proxy.exe
 
+# CMD
+set AZURE_API_KEY=<your-foundry-key>
+gate-proxy.exe
+
 # or via flag (any OS)
 ./gate-proxy.exe -azure-key "<your-foundry-key>"
 ```

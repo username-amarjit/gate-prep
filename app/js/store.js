@@ -283,6 +283,10 @@
     state.source = "github";
     return true;
   }
+  async function pushAllToRepo() {
+    if (!githubReady()) throw new Error("Set the data repo owner/name in Settings and unlock first.");
+    return GP.github.pushAll();
+  }
   async function rebuildCacheFromRepo() {
     await idbClear();
     if (githubReady()) return pullFromRepo();
@@ -328,6 +332,6 @@
     ratingOf, recordAttempt,
     getStudyPath, setStudyPath,
     locate, addNode, renameNode, deleteNode,
-    pullFromRepo, rebuildCacheFromRepo, buildIndex, search,
+    pullFromRepo, pushAllToRepo, rebuildCacheFromRepo, buildIndex, search,
   };
 })();
